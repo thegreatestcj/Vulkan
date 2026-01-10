@@ -76,6 +76,10 @@ void VulkanEngine::init()
 
     mainCamera.pitch = 0;
     mainCamera.yaw = 0;
+
+	// Initialize culling system
+	// Option A: Load from JSON config file
+	_cullingConfig = CullingConfig::load("../config/culling.json");
 }
 
 void VulkanEngine::init_default_data() {

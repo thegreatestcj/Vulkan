@@ -15,9 +15,11 @@
 #include <vk_mem_alloc.h>
 
 #include <camera.h>
+#include <culler_config.h>
 #include <vk_descriptors.h>
 #include <vk_loader.h>
 #include <vk_pipelines.h>
+class ICuller;
 struct MeshAsset;
 namespace fastgltf {
 struct Mesh;
@@ -222,6 +224,14 @@ public:
 
     std::vector<ComputeEffect> backgroundEffects;
     int currentBackgroundEffect { 0 };
+
+    // Culling system
+    std::unique_ptr<ICuller> _culler;
+    CullingConfig _cullingConfig;
+    int _currentCullingMode = 0;  // For ImGui selector
+
+    // Reusable buffer to avoid allocation every frame
+    std::vector<uint32_t> _visibleIndices;
 
     // singleton style getter.multiple engines is not supported
     static VulkanEngine& Get();
