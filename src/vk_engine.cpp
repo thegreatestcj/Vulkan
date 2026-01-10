@@ -576,6 +576,10 @@ void VulkanEngine::run()
             if (e.type == SDL_QUIT)
                 bQuit = true;
 
+        	if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) {
+        		bQuit = true;
+        	}
+
             if (e.type == SDL_WINDOWEVENT) {
 
 				if (e.window.event == SDL_WINDOWEVENT_RESIZED) {

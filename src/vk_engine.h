@@ -16,10 +16,12 @@
 
 #include <camera.h>
 #include <culler_config.h>
+#include <culler_interface.h>
+
 #include <vk_descriptors.h>
 #include <vk_loader.h>
 #include <vk_pipelines.h>
-class ICuller;
+
 struct MeshAsset;
 namespace fastgltf {
 struct Mesh;
