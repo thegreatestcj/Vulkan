@@ -27,6 +27,7 @@ target_link_libraries(${TARGET_NAME}
         vkbootstrap
         imgui
         fastgltf::fastgltf
+        culling
 )
 
 # Copy runtime DLLs to output directory after build (Windows)

@@ -50,3 +50,6 @@ target_sources(imgui PRIVATE
 target_link_libraries(imgui PUBLIC Vulkan::Vulkan SDL2::SDL2)
 
 target_include_directories(stb_image INTERFACE stb_image)
+
+add_library(nlohmann INTERFACE)
+target_include_directories(nlohmann INTERFACE ${CMAKE_CURRENT_SOURCE_DIR})

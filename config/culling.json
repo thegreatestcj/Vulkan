@@ -1,0 +1,5 @@
+﻿{
+  "culling_mode": "cpu_bvh",
+  "options": ["cpu_none", "cpu_plane", "cpu_bvh", "gpu_plane"],
+  "bvh_leaf_size": 4
+}
