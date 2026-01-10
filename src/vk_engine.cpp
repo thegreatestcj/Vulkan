@@ -670,6 +670,56 @@ void VulkanEngine::run()
 			ImGui::End();
 		}
 
+    	// Add new culling debug window
+        // ================================================================
+        if (ImGui::Begin("Culling")) {
+            // Mode selector dropdown
+            const char* modeNames[] = { "CPU_None (NDC)", "CPU_Plane", "CPU_BVH", "GPU_Plane" };
+
+            if (ImGui::Combo("Culling Mode", &_currentCullingMode, modeNames, IM_ARRAYSIZE(modeNames))) {
+                // User changed mode - wait for GPU and recreate culler
+                vkDeviceWaitIdle(_device);
+                _cullingConfig.mode = static_cast<CullingMode>(_currentCullingMode);
+                _culler = CullerFactory::create(_cullingConfig, this);
+
+                // Notify new culler that scene exists
+                _culler->onSceneChanged(drawCommands.OpaqueSurfaces);
+            }
+
+            // BVH leaf size slider (only show for BVH mode)
+            if (_cullingConfig.mode == CullingMode::CPU_BVH) {
+                int leafSize = static_cast<int>(_cullingConfig.bvhLeafSize);
+                if (ImGui::SliderInt("BVH Leaf Size", &leafSize, 1, 32)) {
+                    vkDeviceWaitIdle(_device);
+                    _cullingConfig.bvhLeafSize = static_cast<uint32_t>(leafSize);
+                    _culler = CullerFactory::create(_cullingConfig, this);
+                }
+            }
+
+            // Debug toggle
+            ImGui::Checkbox("Disable Culling", &_disableCulling);
+
+            ImGui::Separator();
+
+            // Display culling statistics
+            if (_culler) {
+                const CullStats& cullStats = _culler->getStats();
+                ImGui::Text("Culling Stats:");
+                ImGui::Text("  Total Objects: %u", cullStats.totalObjects);
+                ImGui::Text("  Visible: %u", cullStats.visibleObjects);
+                ImGui::Text("  Culled: %u (%.1f%%)",
+                    cullStats.culledObjects,
+                    cullStats.totalObjects > 0
+                        ? 100.0f * cullStats.culledObjects / cullStats.totalObjects
+                        : 0.0f);
+                ImGui::Text("  Cull Time: %.3f ms", cullStats.cullTimeMs);
+            } else {
+                ImGui::TextColored(ImVec4(1,0,0,1), "Culler not initialized!");
+            }
+
+            ImGui::End();
+        }
+
 		ImGui::Render();
 
         // imgui commands
