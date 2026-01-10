@@ -16,6 +16,7 @@ target_link_libraries(culling PUBLIC
         glm
         fmt::fmt
         nlohmann
+        vkguide_shared
 )
 
 set_property(TARGET culling PROPERTY CXX_STANDARD 20)

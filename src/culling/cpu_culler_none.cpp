@@ -1,6 +1,8 @@
 ﻿// src/culling/cpu_culler_none.cpp
 #include "cpu_culler_none.h"
+#include <array>
 #include <vk_types.h>
+#include <vk_engine.h>
 #include <chrono>
 
 // Original is_visible from vk_engine.cpp
