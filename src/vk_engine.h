@@ -231,6 +231,7 @@ public:
     std::unique_ptr<ICuller> _culler;
     CullingConfig _cullingConfig;
     int _currentCullingMode = 0;  // For ImGui selector
+    bool _disableCulling { false };
 
     // Reusable buffer to avoid allocation every frame
     std::vector<uint32_t> _visibleIndices;

@@ -19,6 +19,8 @@
 #include <glm/gtx/transform.hpp>
 
 #define VMA_IMPLEMENTATION
+#include <culler_factory.h>
+
 #include "vk_mem_alloc.h"
 
 constexpr bool bUseValidationLayers = false;
@@ -77,9 +79,17 @@ void VulkanEngine::init()
     mainCamera.pitch = 0;
     mainCamera.yaw = 0;
 
+
 	// Initialize culling system
-	// Option A: Load from JSON config file
 	_cullingConfig = CullingConfig::load("../config/culling.json");
+
+	// ============================================================
+	// CRITICAL FIX: Actually create the culler!
+	// ============================================================
+	_culler = CullerFactory::create(_cullingConfig, this);
+	_currentCullingMode = static_cast<int>(_cullingConfig.mode);
+
+	fmt::print("Culling initialized: mode={}\n", _currentCullingMode);
 }
 
 void VulkanEngine::init_default_data() {
@@ -446,53 +456,83 @@ bool is_visible(const RenderObject& obj, const glm::mat4& viewproj) {
 
 void VulkanEngine::draw_geometry(VkCommandBuffer cmd)
 {
+    // ================================================================
+    // CULLING INTEGRATION - Only this part is new
+    // ================================================================
     std::vector<uint32_t> opaque_draws;
     opaque_draws.reserve(drawCommands.OpaqueSurfaces.size());
 
-    for (int i = 0; i < drawCommands.OpaqueSurfaces.size(); i++) {
-       if (is_visible(drawCommands.OpaqueSurfaces[i], sceneData.viewproj)) {
+    if (_disableCulling) {
+        // No culling - render everything
+        for (uint32_t i = 0; i < drawCommands.OpaqueSurfaces.size(); i++) {
             opaque_draws.push_back(i);
-       }
+        }
+    } else {
+        // Use the modular culler
+        _culler->cull(drawCommands.OpaqueSurfaces, sceneData.viewproj, opaque_draws);
     }
 
-    //allocate a new uniform buffer for the scene data
-    AllocatedBuffer gpuSceneDataBuffer =  create_buffer(sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+    // Sort by material for better batching
+    std::sort(opaque_draws.begin(), opaque_draws.end(), [&](uint32_t a, uint32_t b) {
+        const RenderObject& objA = drawCommands.OpaqueSurfaces[a];
+        const RenderObject& objB = drawCommands.OpaqueSurfaces[b];
+        if (objA.material != objB.material) {
+            return objA.material < objB.material;
+        }
+        return objA.indexBuffer < objB.indexBuffer;
+    });
 
-    //add it to the deletion queue of this frame so it gets deleted once its been used
-    get_current_frame()._deletionQueue.push_function([=,this](){
+    // ================================================================
+    // ORIGINAL DESCRIPTOR BINDING CODE - Keep this exactly as-is!
+    // ================================================================
+
+    // Allocate a new uniform buffer for the scene data
+    AllocatedBuffer gpuSceneDataBuffer = create_buffer(sizeof(GPUSceneData),
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+    // Add it to the deletion queue of this frame
+    get_current_frame()._deletionQueue.push_function([=, this]() {
         destroy_buffer(gpuSceneDataBuffer);
     });
 
-    //write the buffer
+    // Write the buffer
     GPUSceneData* sceneUniformData = (GPUSceneData*)gpuSceneDataBuffer.allocation->GetMappedData();
     *sceneUniformData = sceneData;
 
-    VkDescriptorSetVariableDescriptorCountAllocateInfo allocArrayInfo{.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO, .pNext = nullptr};
-   
-    uint32_t descriptorCounts =texCache.Cache.size();
+    // Variable descriptor count for bindless textures
+    VkDescriptorSetVariableDescriptorCountAllocateInfo allocArrayInfo{
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_ALLOCATE_INFO,
+        .pNext = nullptr
+    };
+
+    uint32_t descriptorCounts = texCache.Cache.size();
     allocArrayInfo.pDescriptorCounts = &descriptorCounts;
     allocArrayInfo.descriptorSetCount = 1;
 
+    // Allocate descriptor set with variable count
+    VkDescriptorSet globalDescriptor = get_current_frame()._frameDescriptors.allocate(
+        _device, _gpuSceneDataDescriptorLayout, &allocArrayInfo);
 
-    //create a descriptor set that binds that buffer and update it
-    VkDescriptorSet globalDescriptor = get_current_frame()._frameDescriptors.allocate(_device, _gpuSceneDataDescriptorLayout, &allocArrayInfo);
+    DescriptorWriter writer;
+    writer.write_buffer(0, gpuSceneDataBuffer.buffer, sizeof(GPUSceneData), 0,
+        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 
-	DescriptorWriter writer;
-	writer.write_buffer(0, gpuSceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-
-
+    // CRITICAL: Write bindless texture array to binding 1
     if (texCache.Cache.size() > 0) {
-		VkWriteDescriptorSet arraySet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-		arraySet.descriptorCount = texCache.Cache.size();
-		arraySet.dstArrayElement = 0;
-		arraySet.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-		arraySet.dstBinding = 1;
-		arraySet.pImageInfo = texCache.Cache.data();
-		writer.writes.push_back(arraySet);
+        VkWriteDescriptorSet arraySet{ .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        arraySet.descriptorCount = texCache.Cache.size();
+        arraySet.dstArrayElement = 0;
+        arraySet.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        arraySet.dstBinding = 1;
+        arraySet.pImageInfo = texCache.Cache.data();
+        writer.writes.push_back(arraySet);
     }
 
-	writer.update_set(_device, globalDescriptor);
+    writer.update_set(_device, globalDescriptor);
 
+    // ================================================================
+    // ORIGINAL DRAWING CODE - Keep this exactly as-is!
+    // ================================================================
     MaterialPipeline* lastPipeline = nullptr;
     MaterialInstance* lastMaterial = nullptr;
     VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
@@ -501,44 +541,40 @@ void VulkanEngine::draw_geometry(VkCommandBuffer cmd)
         if (r.material != lastMaterial) {
             lastMaterial = r.material;
             if (r.material->pipeline != lastPipeline) {
-
                 lastPipeline = r.material->pipeline;
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r.material->pipeline->pipeline);
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,r.material->pipeline->layout, 0, 1,
-                    &globalDescriptor, 0, nullptr);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r.material->pipeline->layout,
+                    0, 1, &globalDescriptor, 0, nullptr);
 
-				VkViewport viewport = {};
-				viewport.x = 0;
-				viewport.y = 0;
-				viewport.width = (float)_drawExtent.width;
-				viewport.height = (float)_drawExtent.height;
-				viewport.minDepth = 0.f;
-				viewport.maxDepth = 1.f;
+                VkViewport viewport = {};
+                viewport.x = 0;
+                viewport.y = 0;
+                viewport.width = (float)_drawExtent.width;
+                viewport.height = (float)_drawExtent.height;
+                viewport.minDepth = 0.f;
+                viewport.maxDepth = 1.f;
+                vkCmdSetViewport(cmd, 0, 1, &viewport);
 
-				vkCmdSetViewport(cmd, 0, 1, &viewport);
-
-				VkRect2D scissor = {};
-				scissor.offset.x = 0;
-				scissor.offset.y = 0;
-				scissor.extent.width = _drawExtent.width;
-				scissor.extent.height = _drawExtent.height;
-
-				vkCmdSetScissor(cmd, 0, 1, &scissor);
+                VkRect2D scissor = {};
+                scissor.offset.x = 0;
+                scissor.offset.y = 0;
+                scissor.extent.width = _drawExtent.width;
+                scissor.extent.height = _drawExtent.height;
+                vkCmdSetScissor(cmd, 0, 1, &scissor);
             }
-
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r.material->pipeline->layout, 1, 1,
-                &r.material->materialSet, 0, nullptr);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, r.material->pipeline->layout,
+                1, 1, &r.material->materialSet, 0, nullptr);
         }
         if (r.indexBuffer != lastIndexBuffer) {
             lastIndexBuffer = r.indexBuffer;
             vkCmdBindIndexBuffer(cmd, r.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
         }
-        // calculate final mesh matrix
+
         GPUDrawPushConstants push_constants;
         push_constants.worldMatrix = r.transform;
         push_constants.vertexBuffer = r.vertexBufferAddress;
-
-        vkCmdPushConstants(cmd, r.material->pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
+        vkCmdPushConstants(cmd, r.material->pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT,
+            0, sizeof(GPUDrawPushConstants), &push_constants);
 
         stats.drawcall_count++;
         stats.triangle_count += r.indexCount / 3;
@@ -548,19 +584,20 @@ void VulkanEngine::draw_geometry(VkCommandBuffer cmd)
     stats.drawcall_count = 0;
     stats.triangle_count = 0;
 
-    for (auto& r : opaque_draws) {
-        draw(drawCommands.OpaqueSurfaces[r]);
+    // ================================================================
+    // CULLING INTEGRATION - Use opaque_draws instead of direct loop
+    // ================================================================
+    for (uint32_t idx : opaque_draws) {
+        draw(drawCommands.OpaqueSurfaces[idx]);
     }
 
     for (auto& r : drawCommands.TransparentSurfaces) {
         draw(r);
     }
 
-    // we delete the draw commands now that we processed them
     drawCommands.OpaqueSurfaces.clear();
     drawCommands.TransparentSurfaces.clear();
 }
-
 void VulkanEngine::run()
 {
     SDL_Event e;
