@@ -26,8 +26,8 @@ void DisneyBRDF::build_pipelines(VulkanEngine* engine) {
     }
 
     const char* fragPath = _enableTransmission
-        ? "../shaders/disney_bsdf.frag.spv"
-        : "../shaders/disney_brdf.frag.spv";
+        ? "../shaders/pbr/disney_bsdf.frag.spv"
+        : "../shaders/pbr/disney_brdf.frag.spv";
 
     if (!vkutil::load_shader_module(fragPath, engine->_device, &fragShader)) {
         fmt::println("Error: Failed to load Disney fragment shader: {}", fragPath);

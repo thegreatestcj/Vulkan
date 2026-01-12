@@ -20,7 +20,7 @@ void MicrofacetBRDF::build_pipelines(VulkanEngine* engine) {
         return;
     }
 
-    if (!vkutil::load_shader_module("../shaders/microfacet.frag.spv",
+    if (!vkutil::load_shader_module("../shaders/pbr/microfacet_brdf.frag.spv",
                                      engine->_device, &fragShader)) {
         fmt::println("Error: Failed to load microfacet fragment shader");
         vkDestroyShaderModule(engine->_device, vertShader, nullptr);
