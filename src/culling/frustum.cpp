@@ -70,9 +70,13 @@ void Frustum::extract(const glm::mat4& vp) {
 }
 
 bool Frustum::testSphere(const glm::vec3& center, float radius) const {
+    // Add small epsilon to prevent edge-case culling due to floating point errors
+    const float EPSILON = 0.001f;
+
     for (int i = 0; i < 6; i++) {
         float dist = glm::dot(glm::vec3(planes_[i]), center) + planes_[i].w;
-        if (dist < -radius) {
+        // Use epsilon to be more conservative
+        if (dist < -(radius + EPSILON)) {
             return false;
         }
     }
@@ -80,6 +84,8 @@ bool Frustum::testSphere(const glm::vec3& center, float radius) const {
 }
 
 bool Frustum::testAABB(const glm::vec3& aabbMin, const glm::vec3& aabbMax) const {
+    const float EPSILON = 0.001f;
+
     for (int i = 0; i < 6; i++) {
         glm::vec3 pVertex;
         pVertex.x = (planes_[i].x > 0) ? aabbMax.x : aabbMin.x;
@@ -87,7 +93,8 @@ bool Frustum::testAABB(const glm::vec3& aabbMin, const glm::vec3& aabbMax) const
         pVertex.z = (planes_[i].z > 0) ? aabbMax.z : aabbMin.z;
 
         float dist = glm::dot(glm::vec3(planes_[i]), pVertex) + planes_[i].w;
-        if (dist < 0) {
+        // Use epsilon to be more conservative
+        if (dist < -EPSILON) {
             return false;
         }
     }
